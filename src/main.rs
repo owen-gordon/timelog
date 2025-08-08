@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::fs::{File, self, OpenOptions};
 use std::io::{Write, BufWriter, BufReader};
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Datelike, Days, NaiveDate, TimeDelta, Utc, Weekday};
+use chrono::{DateTime, Datelike, Days, NaiveDate, SecondsFormat, Utc, Weekday, Local};
 use std::io::IsTerminal;
 
 
@@ -35,7 +35,8 @@ enum Commands {
     Pause,
     Resume,
     Stop,
-    Report { period: Period }
+    Report { period: Period },
+    Status
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -93,6 +94,13 @@ fn fmt_hms_ms(ms: i64) -> String {
     format!("{:02}:{:02}:{:02}.{:03}", h, m, s, frac)
 }
 
+fn clamp_nonneg(ms: i64) -> i64 { if ms < 0 { 0 } else { ms } }
+
+fn fmt_ts(dt: DateTime<Utc>) -> String {
+    let local_dt: DateTime<Local> = dt.with_timezone(&Local);
+    // ISO8601, no timezone ambiguity (UTC); change to .to_rfc3339() if you prefer
+    local_dt.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
 
 fn write<T>(t: T, file: File)
 where
@@ -345,7 +353,7 @@ fn main() {
             let record = Record {
                 task: state.task.clone(),
                 duration_ms: elapsed.num_milliseconds(),
-                date: Utc::now().date_naive(),
+                date: Utc::now().naive_local().date(),
             };
 
             let f = OpenOptions::new().create(true).write(true).append(true)
@@ -392,6 +400,46 @@ fn main() {
             filtered.sort_by_key(|r| (r.date, r.task.clone()));
 
             print_report(period.clone(), start, end, &filtered);
+        }
+
+        Commands::Status => {
+            if !state_path().exists() {
+                die("no task to provide status");
+            }
+
+            let file = File::open(state_path()).expect("Unable to open state");
+            let state: State = read(file);
+
+            let epoch = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
+
+            // If active, elapsed = now - started_at; if paused, elapsed = stored
+            let (elapsed_ms, since_ts, status_str) = if state.active {
+                let e = (Utc::now() - state.timestamp).num_milliseconds();
+                (clamp_nonneg(e), state.timestamp, "active")
+            } else {
+                let e = (state.timestamp - epoch).num_milliseconds();
+                (clamp_nonneg(e), state.timestamp, "paused")
+            };
+
+            // Pretty, concise status lines
+            if state.active {
+                // e.g., "active 00:42:10.123 since 2025-08-08T17:20:11Z  —  task: compile"
+                info(&format!(
+                    "{}  {}  since {}  —  task: {}",
+                    emph("active"),
+                    fmt_hms_ms(elapsed_ms),
+                    fmt_ts(since_ts),
+                    emph(&state.task),
+                ));
+            } else {
+                // When paused, `since_ts` is the pause timestamp encoded in state.timestamp
+                info(&format!(
+                    "{}  accumulated {}  —  task: {}",
+                    emph("paused"),
+                    fmt_hms_ms(elapsed_ms),
+                    emph(&state.task),
+                ));
+            }
         }
     }
 }
