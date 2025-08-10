@@ -1,14 +1,14 @@
+use chrono::{DateTime, Datelike, Days, Local, NaiveDate, SecondsFormat, Utc, Weekday};
 use clap::{Parser, Subcommand, ValueEnum};
-use std;
-use std::env;
-use std::path::PathBuf;
-use std::fs::{File, self, OpenOptions};
-use std::io::{Write, BufWriter, BufReader};
-use std::process::Command;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use chrono::{DateTime, Datelike, Days, NaiveDate, SecondsFormat, Utc, Weekday, Local};
+use std;
+use std::env;
+use std::fs::{self, File, OpenOptions};
 use std::io::IsTerminal;
+use std::io::{BufReader, BufWriter, Write};
+use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -27,26 +27,26 @@ pub enum Period {
     ThisMonth,
     LastMonth,
     YTD,
-    LastYear
+    LastYear,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    Start { 
+    Start {
         task: String,
         #[arg(short, long)]
-        project: Option<String>
+        project: Option<String>,
     },
     Pause,
     Resume,
     Stop,
-    Report { 
+    Report {
         period: Period,
         #[arg(short, long)]
-        project: Option<String>
+        project: Option<String>,
     },
     Status,
-    Upload { 
+    Upload {
         #[arg(short, long)]
         plugin: Option<String>,
         #[arg(required_unless_present = "list_plugins")]
@@ -55,7 +55,7 @@ pub enum Commands {
         dry_run: bool,
         #[arg(long)]
         list_plugins: bool,
-    }
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -63,7 +63,7 @@ pub struct Record {
     pub task: String,
     pub duration_ms: i64,
     pub date: NaiveDate,
-    pub project: Option<String>
+    pub project: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -71,7 +71,7 @@ pub struct State {
     pub timestamp: DateTime<Utc>,
     pub task: String,
     pub active: bool,
-    pub project: Option<String>
+    pub project: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -123,21 +123,23 @@ pub fn discover_plugins() -> Vec<String> {
     if !plugin_path.exists() {
         return Vec::new();
     }
-    
+
     fs::read_dir(plugin_path)
         .unwrap_or_else(|_| die("Cannot read plugin directory"))
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
             // Only include executable files that start with "timelog-" and don't end with ".json"
-            if path.is_file() && 
-               path.file_name()?.to_str()?.starts_with("timelog-") &&
-               !path.file_name()?.to_str()?.ends_with(".json") {
+            if path.is_file()
+                && path.file_name()?.to_str()?.starts_with("timelog-")
+                && !path.file_name()?.to_str()?.ends_with(".json")
+            {
                 // Check if file is executable
                 use std::os::unix::fs::PermissionsExt;
                 let metadata = path.metadata().ok()?;
                 let permissions = metadata.permissions();
-                if permissions.mode() & 0o111 != 0 { // Check if any execute bit is set
+                if permissions.mode() & 0o111 != 0 {
+                    // Check if any execute bit is set
                     let stem = path.file_stem()?.to_str()?;
                     // Remove "timelog-" prefix for display
                     if stem.len() > 8 {
@@ -155,11 +157,19 @@ pub fn discover_plugins() -> Vec<String> {
         .collect()
 }
 
-pub fn execute_plugin(plugin_name: &str, input: &PluginInput, dry_run: bool) -> Result<PluginOutput, String> {
+pub fn execute_plugin(
+    plugin_name: &str,
+    input: &PluginInput,
+    dry_run: bool,
+) -> Result<PluginOutput, String> {
     let plugin_path = plugin_dir().join(format!("timelog-{}", plugin_name));
-    
+
     if !plugin_path.exists() {
-        return Err(format!("Plugin '{}' not found at {}", plugin_name, plugin_path.display()));
+        return Err(format!(
+            "Plugin '{}' not found at {}",
+            plugin_name,
+            plugin_path.display()
+        ));
     }
 
     let mut cmd = Command::new(&plugin_path);
@@ -167,8 +177,8 @@ pub fn execute_plugin(plugin_name: &str, input: &PluginInput, dry_run: bool) -> 
         cmd.arg("--dry-run");
     }
 
-    let input_json = serde_json::to_string(input)
-        .map_err(|e| format!("Failed to serialize input: {}", e))?;
+    let input_json =
+        serde_json::to_string(input).map_err(|e| format!("Failed to serialize input: {}", e))?;
 
     let mut child = cmd
         .stdin(std::process::Stdio::piped())
@@ -178,16 +188,22 @@ pub fn execute_plugin(plugin_name: &str, input: &PluginInput, dry_run: bool) -> 
         .map_err(|e| format!("Failed to start plugin: {}", e))?;
 
     if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(input_json.as_bytes())
+        stdin
+            .write_all(input_json.as_bytes())
             .map_err(|e| format!("Failed to write to plugin stdin: {}", e))?;
     }
 
-    let output = child.wait_with_output()
+    let output = child
+        .wait_with_output()
         .map_err(|e| format!("Failed to wait for plugin: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Plugin failed with exit code {:?}: {}", output.status.code(), stderr));
+        return Err(format!(
+            "Plugin failed with exit code {:?}: {}",
+            output.status.code(),
+            stderr
+        ));
     }
 
     serde_json::from_slice(&output.stdout)
@@ -201,7 +217,11 @@ pub fn is_tty() -> bool {
 
 pub fn emph(s: &str) -> String {
     // bold if TTY, plain otherwise
-    if is_tty() { format!("\x1b[1m{}\x1b[0m", s) } else { s.to_string() }
+    if is_tty() {
+        format!("\x1b[1m{}\x1b[0m", s)
+    } else {
+        s.to_string()
+    }
 }
 
 pub fn info(msg: &str) {
@@ -227,7 +247,9 @@ pub fn fmt_hms_ms(ms: i64) -> String {
     format!("{:02}:{:02}:{:02}.{:03}", h, m, s, frac)
 }
 
-pub fn clamp_nonneg(ms: i64) -> i64 { if ms < 0 { 0 } else { ms } }
+pub fn clamp_nonneg(ms: i64) -> i64 {
+    if ms < 0 { 0 } else { ms }
+}
 
 pub fn fmt_ts(dt: DateTime<Utc>) -> String {
     let local_dt: DateTime<Local> = dt.with_timezone(&Local);
@@ -237,19 +259,21 @@ pub fn fmt_ts(dt: DateTime<Utc>) -> String {
 
 pub fn write<T>(t: T, file: File)
 where
-    T: Serialize + for<'de> Deserialize<'de>
+    T: Serialize + for<'de> Deserialize<'de>,
 {
     let serialized = serde_json::to_string_pretty(&t).expect("Unable to serialize");
 
     let mut writer = BufWriter::new(file);
 
-    writer.write_all(serialized.as_bytes()).expect("Unable to write");
+    writer
+        .write_all(serialized.as_bytes())
+        .expect("Unable to write");
     writer.flush().expect("Unable to flush");
 }
 
-pub fn read<T>(file: File) -> T 
+pub fn read<T>(file: File) -> T
 where
-    T: Serialize + for<'de> Deserialize<'de>
+    T: Serialize + for<'de> Deserialize<'de>,
 {
     let reader = BufReader::new(file);
 
@@ -321,7 +345,12 @@ pub fn fmt_record_for_period(r: &Record, period: Period, _today: NaiveDate) -> S
         Period::Yesterday => "Yesterday".to_string(),
         Period::ThisWeek | Period::LastWeek => {
             // e.g. "Mon 08-04"
-            format!("{} {:02}-{:02}", weekday_short(r.date.weekday()), r.date.month(), r.date.day())
+            format!(
+                "{} {:02}-{:02}",
+                weekday_short(r.date.weekday()),
+                r.date.month(),
+                r.date.day()
+            )
         }
         Period::ThisMonth | Period::LastMonth => {
             // e.g. "08-04"
@@ -330,7 +359,12 @@ pub fn fmt_record_for_period(r: &Record, period: Period, _today: NaiveDate) -> S
         Period::YTD | Period::LastYear => r.date.to_string(), // YYYY-MM-DD
     };
 
-    format!("• {:<18} {}  ({})", r.task, fmt_duration(r.duration_ms), date_label)
+    format!(
+        "• {:<18} {}  ({})",
+        r.task,
+        fmt_duration(r.duration_ms),
+        date_label
+    )
 }
 
 pub fn weekday_short(w: Weekday) -> &'static str {
@@ -345,7 +379,13 @@ pub fn weekday_short(w: Weekday) -> &'static str {
     }
 }
 
-pub fn print_report(period: Period, start: NaiveDate, end: NaiveDate, rows: &[Record], project_filter: &Option<String>) {
+pub fn print_report(
+    period: Period,
+    start: NaiveDate,
+    end: NaiveDate,
+    rows: &[Record],
+    project_filter: &Option<String>,
+) {
     let title = match period {
         Period::Today => "Today",
         Period::Yesterday => "Yesterday",
@@ -359,9 +399,13 @@ pub fn print_report(period: Period, start: NaiveDate, end: NaiveDate, rows: &[Re
 
     let title_suffix = match project_filter {
         Some(p) => format!(" for project {}", emph(p)),
-        None => String::new()
+        None => String::new(),
     };
-    println!("{}{} ({start}..{end})", emph(&format!("{} report", title)), title_suffix);
+    println!(
+        "{}{} ({start}..{end})",
+        emph(&format!("{} report", title)),
+        title_suffix
+    );
 
     // column widths
     let mut task_w = "TASK".len();
@@ -376,10 +420,17 @@ pub fn print_report(period: Period, start: NaiveDate, end: NaiveDate, rows: &[Re
     let hdr_task = "TASK";
     let hdr_project = "PROJECT";
     let hdr_date = "DATE";
-    let hdr_dur  = "DURATION";
+    let hdr_dur = "DURATION";
 
-    println!("{:<task_w$}  {:<project_w$}  {:<10}  {:>10}",
-             hdr_task, hdr_project, hdr_date, hdr_dur, task_w = task_w, project_w = project_w);
+    println!(
+        "{:<task_w$}  {:<project_w$}  {:<10}  {:>10}",
+        hdr_task,
+        hdr_project,
+        hdr_date,
+        hdr_dur,
+        task_w = task_w,
+        project_w = project_w
+    );
     println!(
         "{}  {}  {}  {}",
         "-".repeat(task_w),
@@ -396,7 +447,7 @@ pub fn print_report(period: Period, start: NaiveDate, end: NaiveDate, rows: &[Re
             "{:<task_w$}  {:<project_w$}  {:<10}  {:>10}",
             r.task,
             project_str,
-            r.date,                   // always ISO date for CLI clarity
+            r.date, // always ISO date for CLI clarity
             fmt_duration(r.duration_ms),
             task_w = task_w,
             project_w = project_w
@@ -423,9 +474,7 @@ pub fn print_report(period: Period, start: NaiveDate, end: NaiveDate, rows: &[Re
 
 pub fn load_records() -> Result<Vec<Record>, String> {
     let file = File::open(record_path()).map_err(|_| "no records found".to_string())?;
-    let mut rdr = csv::ReaderBuilder::new()
-        .flexible(true)
-        .from_reader(file);
+    let mut rdr = csv::ReaderBuilder::new().flexible(true).from_reader(file);
 
     let mut records: Vec<Record> = Vec::new();
     for result in rdr.records() {
@@ -434,8 +483,12 @@ pub fn load_records() -> Result<Vec<Record>, String> {
             // Old format without project
             Record {
                 task: record_result[0].to_string(),
-                duration_ms: record_result[1].parse().map_err(|_| "Invalid duration".to_string())?,
-                date: record_result[2].parse().map_err(|_| "Invalid date".to_string())?,
+                duration_ms: record_result[1]
+                    .parse()
+                    .map_err(|_| "Invalid duration".to_string())?,
+                date: record_result[2]
+                    .parse()
+                    .map_err(|_| "Invalid date".to_string())?,
                 project: None,
             }
         } else if record_result.len() >= 4 {
@@ -447,8 +500,12 @@ pub fn load_records() -> Result<Vec<Record>, String> {
             };
             Record {
                 task: record_result[0].to_string(),
-                duration_ms: record_result[1].parse().map_err(|_| "Invalid duration".to_string())?,
-                date: record_result[2].parse().map_err(|_| "Invalid date".to_string())?,
+                duration_ms: record_result[1]
+                    .parse()
+                    .map_err(|_| "Invalid duration".to_string())?,
+                date: record_result[2]
+                    .parse()
+                    .map_err(|_| "Invalid date".to_string())?,
                 project,
             }
         } else {
@@ -460,12 +517,18 @@ pub fn load_records() -> Result<Vec<Record>, String> {
 }
 
 pub fn save_record(record: &Record) -> Result<(), String> {
-    let f = OpenOptions::new().create(true).write(true).append(true)
-        .open(record_path()).map_err(|e| format!("Failed to open record file: {}", e))?;
+    let f = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(record_path())
+        .map_err(|e| format!("Failed to open record file: {}", e))?;
     let empty = f.metadata().map(|m| m.len() == 0).unwrap_or(true);
     let mut wtr = csv::WriterBuilder::new().has_headers(empty).from_writer(f);
-    wtr.serialize(&record).map_err(|e| format!("Failed to write record: {}", e))?;
-    wtr.flush().map_err(|e| format!("Failed to flush record: {}", e))?;
+    wtr.serialize(&record)
+        .map_err(|e| format!("Failed to write record: {}", e))?;
+    wtr.flush()
+        .map_err(|e| format!("Failed to flush record: {}", e))?;
     Ok(())
 }
 
@@ -475,7 +538,8 @@ pub fn load_state() -> Result<State, String> {
 }
 
 pub fn save_state(state: &State) -> Result<(), String> {
-    let file = File::create(state_path()).map_err(|e| format!("Unable to create state file: {}", e))?;
+    let file =
+        File::create(state_path()).map_err(|e| format!("Unable to create state file: {}", e))?;
     write(state.clone(), file);
     Ok(())
 }

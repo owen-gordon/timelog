@@ -1,12 +1,7 @@
-use timelog::*;
+use chrono::Utc;
 use clap::Parser;
 use std::fs;
-use chrono::Utc;
-
-
-
-
-
+use timelog::*;
 
 fn main() {
     let cli = Cli::parse();
@@ -17,11 +12,11 @@ fn main() {
                 die("a task is already in progress; run `timelog pause` or `timelog stop`");
             }
 
-            let state = State{ 
-                timestamp: Utc::now(), 
-                task: task.to_string(), 
+            let state = State {
+                timestamp: Utc::now(),
+                task: task.to_string(),
                 active: true,
-                project: project.clone()
+                project: project.clone(),
             };
             if let Err(e) = save_state(&state) {
                 die(&e);
@@ -29,7 +24,7 @@ fn main() {
 
             let project_info = match project {
                 Some(p) => format!(" in project {}", emph(&p)),
-                None => String::new()
+                None => String::new(),
             };
             info(&format!("started {}{}", emph(&task), project_info));
         }
@@ -51,17 +46,18 @@ fn main() {
             let epoch = chrono::DateTime::<Utc>::from_timestamp(0, 0).unwrap();
             let timestamp = epoch + elapsed;
 
-            let paused_state = State{ 
-                timestamp, 
-                task: state.task.clone(), 
+            let paused_state = State {
+                timestamp,
+                task: state.task.clone(),
                 active: false,
-                project: state.project.clone()
+                project: state.project.clone(),
             };
             if let Err(e) = save_state(&paused_state) {
                 die(&e);
             }
 
-            info(&format!("paused {}  (elapsed {})",
+            info(&format!(
+                "paused {}  (elapsed {})",
                 emph(&state.task),
                 fmt_hms_ms(elapsed.num_milliseconds()),
             ));
@@ -84,11 +80,11 @@ fn main() {
             let elapsed = state.timestamp - epoch;
             let timestamp = Utc::now() - elapsed;
 
-            let active_state = State{ 
-                timestamp, 
-                task: state.task.clone(), 
+            let active_state = State {
+                timestamp,
+                task: state.task.clone(),
                 active: true,
-                project: state.project.clone()
+                project: state.project.clone(),
             };
             if let Err(e) = save_state(&active_state) {
                 die(&e);
@@ -131,7 +127,7 @@ fn main() {
 
             let project_info = match &record.project {
                 Some(p) => format!(" in project {}", emph(p)),
-                None => String::new()
+                None => String::new(),
             };
             info(&format!(
                 "recorded {}{}  {} on {}",
@@ -156,7 +152,7 @@ fn main() {
                 .filter(|x| x.date >= start && x.date <= end)
                 .filter(|x| match project {
                     Some(p) => x.project.as_ref().map_or(false, |proj| proj == p),
-                    None => true
+                    None => true,
                 })
                 .collect();
 
@@ -195,9 +191,9 @@ fn main() {
             // Pretty, concise status lines
             let project_info = match &state.project {
                 Some(p) => format!(" in project {}", emph(p)),
-                None => String::new()
+                None => String::new(),
             };
-            
+
             if state.active {
                 // e.g., "active 00:42:10.123 since 2025-08-08T17:20:11Z  —  task: compile in project myproject"
                 info(&format!(
@@ -220,12 +216,20 @@ fn main() {
             }
         }
 
-        Commands::Upload { plugin, period, dry_run, list_plugins } => {
+        Commands::Upload {
+            plugin,
+            period,
+            dry_run,
+            list_plugins,
+        } => {
             if *list_plugins {
                 let plugins = discover_plugins();
                 if plugins.is_empty() {
                     info("No plugins found");
-                    info(&format!("Place plugin scripts in: {}", plugin_dir().display()));
+                    info(&format!(
+                        "Place plugin scripts in: {}",
+                        plugin_dir().display()
+                    ));
                     info("Plugin scripts should be named 'timelog-<name>' and be executable");
                 } else {
                     info("Available plugins:");
