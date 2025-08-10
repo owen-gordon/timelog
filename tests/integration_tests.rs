@@ -115,7 +115,24 @@ fn test_backwards_compatibility() {
     // Write old format CSV (without project column)
     let old_csv_content =
         "task,duration_ms,date\ntask1,3600000,2024-01-15\ntask2,1800000,2024-01-16";
-    fs::write(record_path(), old_csv_content).expect("Failed to write old format CSV");
+
+    let record_file_path = record_path();
+
+    // Ensure the parent directory exists before writing the file
+    if let Some(parent) = record_file_path.parent() {
+        fs::create_dir_all(parent).expect("Failed to create parent directory");
+    }
+
+    fs::write(&record_file_path, old_csv_content).expect("Failed to write old format CSV");
+
+    // Ensure the file exists and is readable before attempting to load
+    assert!(
+        record_file_path.exists(),
+        "Record file should exist after writing"
+    );
+
+    // Add a small delay to ensure filesystem operations are complete
+    std::thread::sleep(std::time::Duration::from_millis(10));
 
     // Load records should work with old format
     let loaded_records = load_records().expect("Failed to load old format records");
@@ -178,12 +195,12 @@ fn test_plugin_discovery() {
 #[test]
 #[serial]
 fn test_path_functions() {
-    // Store original values
+    // Store original values to ensure we restore them properly
     let orig_record = env::var("TIMELOG_RECORD_PATH").ok();
     let orig_state = env::var("TIMELOG_STATE_PATH").ok();
     let orig_plugin = env::var("TIMELOG_PLUGIN_PATH").ok();
 
-    // Test default paths
+    // Test default paths by temporarily clearing env vars
     unsafe {
         env::remove_var("TIMELOG_RECORD_PATH");
         env::remove_var("TIMELOG_STATE_PATH");
@@ -210,7 +227,8 @@ fn test_path_functions() {
     assert_eq!(state_path(), Path::new("/custom/state/path"));
     assert_eq!(plugin_dir(), Path::new("/custom/plugin/path"));
 
-    // Restore original values
+    // CRITICAL: Restore original values immediately to prevent race conditions
+    // with other tests that depend on these environment variables
     unsafe {
         if let Some(val) = orig_record {
             env::set_var("TIMELOG_RECORD_PATH", val);
