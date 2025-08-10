@@ -70,14 +70,14 @@ echo -e "\n${YELLOW}Found ${#TEST_SCRIPTS[@]} test scripts to run${NC}"
 for test_script in "${TEST_SCRIPTS[@]}"; do
     if [ -f "$test_script" ]; then
         if run_test "$test_script"; then
-            ((PASSED++))
+            PASSED=$((PASSED + 1))
         else
-            ((FAILED++))
+            FAILED=$((FAILED + 1))
             FAILED_TESTS+=("$(basename "$test_script" .sh)")
         fi
     else
         echo -e "${RED}Warning: Test script not found: $test_script${NC}"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         FAILED_TESTS+=("$(basename "$test_script" .sh) (not found)")
     fi
 done
