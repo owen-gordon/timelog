@@ -1,8 +1,6 @@
 use chrono::{DateTime, Datelike, Days, Local, NaiveDate, SecondsFormat, Utc, Weekday};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
-use serde_json;
-use std;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::IsTerminal;
@@ -95,7 +93,7 @@ pub fn record_path() -> PathBuf {
         return PathBuf::from(custom_path);
     }
     // Default to ~/.timelog-record
-    return PathBuf::from(env::var("HOME").expect("$HOME not set")).join(".timelog-record");
+    PathBuf::from(env::var("HOME").expect("$HOME not set")).join(".timelog-record")
 }
 
 pub fn state_path() -> PathBuf {
@@ -104,7 +102,7 @@ pub fn state_path() -> PathBuf {
         return PathBuf::from(custom_path);
     }
     // Default to ~/.timelog-state
-    return PathBuf::from(env::var("HOME").expect("$HOME not set")).join(".timelog-state");
+    PathBuf::from(env::var("HOME").expect("$HOME not set")).join(".timelog-state")
 }
 
 pub fn plugin_dir() -> PathBuf {
@@ -162,13 +160,11 @@ pub fn execute_plugin(
     input: &PluginInput,
     dry_run: bool,
 ) -> Result<PluginOutput, String> {
-    let plugin_path = plugin_dir().join(format!("timelog-{}", plugin_name));
+    let plugin_path = plugin_dir().join(format!("timelog-{plugin_name}"));
 
     if !plugin_path.exists() {
         return Err(format!(
-            "Plugin '{}' not found at {}",
-            plugin_name,
-            plugin_path.display()
+            "Plugin '{plugin_name}' not found at {plugin_path:?}"
         ));
     }
 
@@ -178,24 +174,24 @@ pub fn execute_plugin(
     }
 
     let input_json =
-        serde_json::to_string(input).map_err(|e| format!("Failed to serialize input: {}", e))?;
+        serde_json::to_string(input).map_err(|e| format!("Failed to serialize input: {e}"))?;
 
     let mut child = cmd
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to start plugin: {}", e))?;
+        .map_err(|e| format!("Failed to start plugin: {e}"))?;
 
     if let Some(stdin) = child.stdin.as_mut() {
         stdin
             .write_all(input_json.as_bytes())
-            .map_err(|e| format!("Failed to write to plugin stdin: {}", e))?;
+            .map_err(|e| format!("Failed to write to plugin stdin: {e}"))?;
     }
 
     let output = child
         .wait_with_output()
-        .map_err(|e| format!("Failed to wait for plugin: {}", e))?;
+        .map_err(|e| format!("Failed to wait for plugin: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -207,7 +203,7 @@ pub fn execute_plugin(
     }
 
     serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("Failed to parse plugin output: {}", e))
+        .map_err(|e| format!("Failed to parse plugin output: {e}"))
 }
 
 pub fn is_tty() -> bool {
@@ -218,22 +214,22 @@ pub fn is_tty() -> bool {
 pub fn emph(s: &str) -> String {
     // bold if TTY, plain otherwise
     if is_tty() {
-        format!("\x1b[1m{}\x1b[0m", s)
+        format!("\x1b[1m{s}\x1b[0m")
     } else {
         s.to_string()
     }
 }
 
 pub fn info(msg: &str) {
-    println!("{}", msg);
+    println!("{msg}");
 }
 
 pub fn warn(msg: &str) {
-    eprintln!("warning: {}", msg);
+    eprintln!("warning: {msg}");
 }
 
 pub fn die(msg: &str) -> ! {
-    eprintln!("error: {}", msg);
+    eprintln!("error: {msg}");
     std::process::exit(1);
 }
 
@@ -244,7 +240,7 @@ pub fn fmt_hms_ms(ms: i64) -> String {
     let m = (total % 3600) / 60;
     let s = total % 60;
     let frac = ms % 1000;
-    format!("{:02}:{:02}:{:02}.{:03}", h, m, s, frac)
+    format!("{h:02}:{m:02}:{s:02}.{frac:03}")
 }
 
 pub fn clamp_nonneg(ms: i64) -> i64 {
@@ -277,7 +273,7 @@ where
 {
     let reader = BufReader::new(file);
 
-    return serde_json::from_reader(reader).expect("Unable to read");
+    serde_json::from_reader(reader).expect("Unable to read")
 }
 
 pub fn period_range(period: Period, today: NaiveDate) -> (NaiveDate, NaiveDate) {
@@ -332,9 +328,9 @@ pub fn fmt_duration(ms: i64) -> String {
     let m = (total_secs % 3600) / 60;
     let s = total_secs % 60;
     if s == 0 {
-        format!("{:02}h{:02}m", h, m)
+        format!("{h:02}h{m:02}m")
     } else {
-        format!("{:02}h{:02}m{:02}s", h, m, s)
+        format!("{h:02}h{m:02}m{s:02}s")
     }
 }
 
@@ -403,7 +399,7 @@ pub fn print_report(
     };
     println!(
         "{}{} ({start}..{end})",
-        emph(&format!("{} report", title)),
+        emph(&format!("{title} report")),
         title_suffix
     );
 
@@ -423,13 +419,7 @@ pub fn print_report(
     let hdr_dur = "DURATION";
 
     println!(
-        "{:<task_w$}  {:<project_w$}  {:<10}  {:>10}",
-        hdr_task,
-        hdr_project,
-        hdr_date,
-        hdr_dur,
-        task_w = task_w,
-        project_w = project_w
+        "{hdr_task:<task_w$}  {hdr_project:<project_w$}  {hdr_date:<10}  {hdr_dur:>10}"
     );
     println!(
         "{}  {}  {}  {}",
@@ -478,7 +468,7 @@ pub fn load_records() -> Result<Vec<Record>, String> {
 
     let mut records: Vec<Record> = Vec::new();
     for result in rdr.records() {
-        let record_result = result.map_err(|e| format!("Unable to read CSV record: {}", e))?;
+        let record_result = result.map_err(|e| format!("Unable to read CSV record: {e}"))?;
         let record = if record_result.len() == 3 {
             // Old format without project
             Record {
@@ -519,16 +509,15 @@ pub fn load_records() -> Result<Vec<Record>, String> {
 pub fn save_record(record: &Record) -> Result<(), String> {
     let f = OpenOptions::new()
         .create(true)
-        .write(true)
         .append(true)
         .open(record_path())
-        .map_err(|e| format!("Failed to open record file: {}", e))?;
+        .map_err(|e| format!("Failed to open record file: {e}"))?;
     let empty = f.metadata().map(|m| m.len() == 0).unwrap_or(true);
     let mut wtr = csv::WriterBuilder::new().has_headers(empty).from_writer(f);
-    wtr.serialize(&record)
-        .map_err(|e| format!("Failed to write record: {}", e))?;
+    wtr.serialize(record)
+        .map_err(|e| format!("Failed to write record: {e}"))?;
     wtr.flush()
-        .map_err(|e| format!("Failed to flush record: {}", e))?;
+        .map_err(|e| format!("Failed to flush record: {e}"))?;
     Ok(())
 }
 
@@ -539,13 +528,13 @@ pub fn load_state() -> Result<State, String> {
 
 pub fn save_state(state: &State) -> Result<(), String> {
     let file =
-        File::create(state_path()).map_err(|e| format!("Unable to create state file: {}", e))?;
+        File::create(state_path()).map_err(|e| format!("Unable to create state file: {e}"))?;
     write(state.clone(), file);
     Ok(())
 }
 
 pub fn delete_state() -> Result<(), String> {
-    fs::remove_file(state_path()).map_err(|e| format!("Unable to delete state file: {}", e))
+    fs::remove_file(state_path()).map_err(|e| format!("Unable to delete state file: {e}"))
 }
 
 #[cfg(test)]

@@ -23,10 +23,10 @@ fn main() {
             }
 
             let project_info = match project {
-                Some(p) => format!(" in project {}", emph(&p)),
+                Some(p) => format!(" in project {}", emph(p)),
                 None => String::new(),
             };
-            info(&format!("started {}{}", emph(&task), project_info));
+            info(&format!("started {}{}", emph(task), project_info));
         }
 
         Commands::Pause => {
@@ -151,7 +151,7 @@ fn main() {
                 .into_iter()
                 .filter(|x| x.date >= start && x.date <= end)
                 .filter(|x| match project {
-                    Some(p) => x.project.as_ref().map_or(false, |proj| proj == p),
+                    Some(p) => x.project.as_ref() == Some(p),
                     None => true,
                 })
                 .collect();
@@ -164,7 +164,7 @@ fn main() {
             // sort by date, then task
             filtered.sort_by_key(|r| (r.date, r.task.clone()));
 
-            print_report(period.clone(), start, end, &filtered, &project);
+            print_report(period.clone(), start, end, &filtered, project);
         }
 
         Commands::Status => {
@@ -234,7 +234,7 @@ fn main() {
                 } else {
                     info("Available plugins:");
                     for p in plugins {
-                        println!("  • {}", p);
+                        println!("  • {p}");
                     }
                 }
                 return;
@@ -273,7 +273,7 @@ fn main() {
             };
 
             // Load plugin config
-            let config_path = plugin_dir().join(format!("timelog-{}.json", plugin_name));
+            let config_path = plugin_dir().join(format!("timelog-{plugin_name}.json"));
             let config = if config_path.exists() {
                 let config_str = fs::read_to_string(config_path)
                     .unwrap_or_else(|_| die("Failed to read plugin config"));
@@ -283,7 +283,7 @@ fn main() {
                 serde_json::Value::Object(serde_json::Map::new())
             };
 
-            let period_str = format!("{:?}", period).to_lowercase();
+            let period_str = format!("{period:?}").to_lowercase();
             let input = PluginInput {
                 records: filtered,
                 period: period_str,
@@ -298,24 +298,24 @@ fn main() {
             match execute_plugin(&plugin_name, &input, *dry_run) {
                 Ok(output) => {
                     if output.success {
-                        info(&format!("{}", output.message));
+                        info(&output.message.to_string());
                         if let Some(count) = output.uploaded_count {
-                            info(&format!("Processed {} records", count));
+                            info(&format!("Processed {count} records"));
                         }
                         if !output.errors.is_empty() {
                             warn("Some warnings occurred:");
                             for error in output.errors {
-                                warn(&format!("  {}", error));
+                                warn(&format!("  {error}"));
                             }
                         }
                     } else {
                         warn(&format!("Plugin failed: {}", output.message));
                         for error in output.errors {
-                            warn(&format!("  {}", error));
+                            warn(&format!("  {error}"));
                         }
                     }
                 }
-                Err(e) => die(&format!("Plugin execution failed: {}", e)),
+                Err(e) => die(&format!("Plugin execution failed: {e}")),
             }
         }
     }

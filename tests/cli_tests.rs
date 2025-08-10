@@ -14,13 +14,13 @@ fn setup_cli_test_env() -> TempDir {
 
     // Set environment variables to use temporary directories
     unsafe {
-        env::set_var("TIMELOG_RECORD_PATH", format!("{}/records.csv", temp_path));
-        env::set_var("TIMELOG_STATE_PATH", format!("{}/state.json", temp_path));
-        env::set_var("TIMELOG_PLUGIN_PATH", format!("{}/plugins", temp_path));
+        env::set_var("TIMELOG_RECORD_PATH", format!("{temp_path}/records.csv"));
+        env::set_var("TIMELOG_STATE_PATH", format!("{temp_path}/state.json"));
+        env::set_var("TIMELOG_PLUGIN_PATH", format!("{temp_path}/plugins"));
     }
 
     // Create plugins directory
-    fs::create_dir_all(format!("{}/plugins", temp_path)).expect("Failed to create plugins dir");
+    fs::create_dir_all(format!("{temp_path}/plugins")).expect("Failed to create plugins dir");
 
     temp_dir
 }
@@ -40,7 +40,7 @@ fn test_start_task() {
     let _temp_dir = setup_cli_test_env();
 
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "test task"])
+    cmd.args(["start", "test task"])
         .assert()
         .success()
         .stdout(predicate::str::contains("started test task"));
@@ -54,7 +54,7 @@ fn test_start_task_with_project() {
     let _temp_dir = setup_cli_test_env();
 
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "test task", "--project", "test project"])
+    cmd.args(["start", "test task", "--project", "test project"])
         .assert()
         .success()
         .stdout(predicate::str::contains("started test task"))
@@ -70,11 +70,11 @@ fn test_cannot_start_when_already_running() {
 
     // Start first task
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "first task"]).assert().success();
+    cmd.args(["start", "first task"]).assert().success();
 
     // Try to start second task - should fail
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "second task"])
+    cmd.args(["start", "second task"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("task is already in progress"));
@@ -103,7 +103,7 @@ fn test_pause_resume_workflow() {
 
     // Start a task
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "pausable task"]).assert().success();
+    cmd.args(["start", "pausable task"]).assert().success();
 
     // Check status (should be active)
     let mut cmd = Command::cargo_bin("timelog").unwrap();
@@ -158,7 +158,7 @@ fn test_stop_workflow() {
 
     // Start a task
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "stoppable task"]).assert().success();
+    cmd.args(["start", "stoppable task"]).assert().success();
 
     // Wait a moment
     thread::sleep(Duration::from_millis(100));
@@ -187,7 +187,7 @@ fn test_report_no_records() {
     let _temp_dir = setup_cli_test_env();
 
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["report", "today"])
+    cmd.args(["report", "today"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("no records found"));
@@ -202,7 +202,7 @@ fn test_complete_workflow_with_report() {
 
     // Start and immediately stop a task to create a record
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "workflow task"]).assert().success();
+    cmd.args(["start", "workflow task"]).assert().success();
 
     // Wait a moment to ensure measurable duration
     thread::sleep(Duration::from_millis(100));
@@ -212,7 +212,7 @@ fn test_complete_workflow_with_report() {
 
     // Generate report
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["report", "today"])
+    cmd.args(["report", "today"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Today report"))
@@ -230,7 +230,7 @@ fn test_project_filtering_in_report() {
 
     // Create records with different projects
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "project1 task", "--project", "project1"])
+    cmd.args(["start", "project1 task", "--project", "project1"])
         .assert()
         .success();
 
@@ -240,7 +240,7 @@ fn test_project_filtering_in_report() {
     cmd.arg("stop").assert().success();
 
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "project2 task", "--project", "project2"])
+    cmd.args(["start", "project2 task", "--project", "project2"])
         .assert()
         .success();
 
@@ -251,7 +251,7 @@ fn test_project_filtering_in_report() {
 
     // Test project filtering
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["report", "today", "--project", "project1"])
+    cmd.args(["report", "today", "--project", "project1"])
         .assert()
         .success()
         .stdout(predicate::str::contains("project1 task"))
@@ -296,7 +296,7 @@ fn test_pause_already_paused_task() {
 
     // Start and pause a task
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "pausable task"]).assert().success();
+    cmd.args(["start", "pausable task"]).assert().success();
 
     let mut cmd = Command::cargo_bin("timelog").unwrap();
     cmd.arg("pause").assert().success();
@@ -318,7 +318,7 @@ fn test_resume_already_active_task() {
 
     // Start a task
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "active task"]).assert().success();
+    cmd.args(["start", "active task"]).assert().success();
 
     // Try to resume (should fail since it's already active)
     let mut cmd = Command::cargo_bin("timelog").unwrap();
@@ -351,7 +351,7 @@ fn test_stop_paused_task() {
 
     // Start, pause, then stop a task
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "paused task"]).assert().success();
+    cmd.args(["start", "paused task"]).assert().success();
 
     thread::sleep(Duration::from_millis(50));
 
@@ -374,7 +374,7 @@ fn test_upload_list_plugins() {
     let _temp_dir = setup_cli_test_env();
 
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["upload", "--list-plugins"])
+    cmd.args(["upload", "--list-plugins"])
         .assert()
         .success()
         .stdout(predicate::str::contains("No plugins found"));
@@ -401,7 +401,7 @@ fn test_different_period_types() {
 
     for period in periods {
         let mut cmd = Command::cargo_bin("timelog").unwrap();
-        cmd.args(&["report", period])
+        cmd.args(["report", period])
             .assert()
             .failure() // Will fail due to no records, but should parse the period correctly
             .stderr(predicate::str::contains("no records found"));
@@ -423,7 +423,7 @@ fn test_help_commands() {
 
     // Test subcommand help
     let mut cmd = Command::cargo_bin("timelog").unwrap();
-    cmd.args(&["start", "--help"])
+    cmd.args(["start", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Usage:"))

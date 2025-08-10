@@ -1,4 +1,3 @@
-use serde_json;
 use serial_test::serial;
 use std::env;
 use std::fs;
@@ -14,13 +13,13 @@ fn setup_plugin_test_env() -> TempDir {
 
     // Set environment variables to use temporary directories
     unsafe {
-        env::set_var("TIMELOG_RECORD_PATH", format!("{}/records.csv", temp_path));
-        env::set_var("TIMELOG_STATE_PATH", format!("{}/state.json", temp_path));
-        env::set_var("TIMELOG_PLUGIN_PATH", format!("{}/plugins", temp_path));
+        env::set_var("TIMELOG_RECORD_PATH", format!("{temp_path}/records.csv"));
+        env::set_var("TIMELOG_STATE_PATH", format!("{temp_path}/state.json"));
+        env::set_var("TIMELOG_PLUGIN_PATH", format!("{temp_path}/plugins"));
     }
 
     // Create plugins directory
-    fs::create_dir_all(format!("{}/plugins", temp_path)).expect("Failed to create plugins dir");
+    fs::create_dir_all(format!("{temp_path}/plugins")).expect("Failed to create plugins dir");
 
     temp_dir
 }

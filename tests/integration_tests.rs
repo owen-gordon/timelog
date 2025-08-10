@@ -1,5 +1,4 @@
 use chrono::{NaiveDate, Utc};
-use serde_json;
 use serial_test::serial;
 use std::env;
 use std::fs;
@@ -15,13 +14,13 @@ fn setup_test_env() -> TempDir {
 
     // Set environment variables to use temporary directories
     unsafe {
-        env::set_var("TIMELOG_RECORD_PATH", format!("{}/records.csv", temp_path));
-        env::set_var("TIMELOG_STATE_PATH", format!("{}/state.json", temp_path));
-        env::set_var("TIMELOG_PLUGIN_PATH", format!("{}/plugins", temp_path));
+        env::set_var("TIMELOG_RECORD_PATH", format!("{temp_path}/records.csv"));
+        env::set_var("TIMELOG_STATE_PATH", format!("{temp_path}/state.json"));
+        env::set_var("TIMELOG_PLUGIN_PATH", format!("{temp_path}/plugins"));
     }
 
     // Create plugins directory
-    fs::create_dir_all(format!("{}/plugins", temp_path)).expect("Failed to create plugins dir");
+    fs::create_dir_all(format!("{temp_path}/plugins")).expect("Failed to create plugins dir");
 
     temp_dir
 }
@@ -233,7 +232,7 @@ fn test_path_functions() {
 
 #[test]
 fn test_period_filtering() {
-    let records = vec![
+    let records = [
         Record {
             task: "task1".to_string(),
             duration_ms: 3600000,
@@ -276,7 +275,7 @@ fn test_period_filtering() {
 
 #[test]
 fn test_project_filtering() {
-    let records = vec![
+    let records = [
         Record {
             task: "task1".to_string(),
             duration_ms: 3600000,
@@ -300,7 +299,7 @@ fn test_project_filtering() {
     // Filter by project1
     let filtered: Vec<&Record> = records
         .iter()
-        .filter(|r| r.project.as_ref().map_or(false, |p| p == "project1"))
+        .filter(|r| r.project.as_ref().is_some_and(|p| p == "project1"))
         .collect();
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].task, "task1");
@@ -308,7 +307,7 @@ fn test_project_filtering() {
     // Filter by project2
     let filtered: Vec<&Record> = records
         .iter()
-        .filter(|r| r.project.as_ref().map_or(false, |p| p == "project2"))
+        .filter(|r| r.project.as_ref().is_some_and(|p| p == "project2"))
         .collect();
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].task, "task2");
