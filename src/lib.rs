@@ -418,9 +418,7 @@ pub fn print_report(
     let hdr_date = "DATE";
     let hdr_dur = "DURATION";
 
-    println!(
-        "{hdr_task:<task_w$}  {hdr_project:<project_w$}  {hdr_date:<10}  {hdr_dur:>10}"
-    );
+    println!("{hdr_task:<task_w$}  {hdr_project:<project_w$}  {hdr_date:<10}  {hdr_dur:>10}");
     println!(
         "{}  {}  {}  {}",
         "-".repeat(task_w),
