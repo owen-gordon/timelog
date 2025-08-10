@@ -439,3 +439,333 @@ fn test_version() {
         .success()
         .stdout(predicate::str::contains("timelog"));
 }
+
+#[test]
+#[serial]
+fn test_amend_task_name() {
+    let _temp_dir = setup_cli_test_env();
+
+    // Create a task first
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["start", "original task", "--project", "testproj"])
+        .assert()
+        .success();
+
+    thread::sleep(Duration::from_millis(100));
+
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["stop"])
+        .assert()
+        .success();
+
+    // Amend the task name
+    let mut cmd = Command::cargo_bin("timelog").unwrap();
+    cmd.args([
+        "amend",
+        "--date",
+        "2025-08-10", // Use today's date
+        "--task",
+        "original",
+        "--new-task",
+        "amended task",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("Successfully amended"));
+
+    cleanup_cli_test_env();
+}
+
+#[test]
+#[serial]
+fn test_amend_duration() {
+    let _temp_dir = setup_cli_test_env();
+
+    // Create a task first
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["start", "test task"])
+        .assert()
+        .success();
+
+    thread::sleep(Duration::from_millis(100));
+
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["stop"])
+        .assert()
+        .success();
+
+    // Amend the duration
+    let mut cmd = Command::cargo_bin("timelog").unwrap();
+    cmd.args([
+        "amend",
+        "--date",
+        "2025-08-10",
+        "--task",
+        "test",
+        "--new-duration",
+        "30",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("00:30:00.000"));
+
+    cleanup_cli_test_env();
+}
+
+#[test]
+#[serial]
+fn test_amend_project() {
+    let _temp_dir = setup_cli_test_env();
+
+    // Create a task first
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["start", "test task", "--project", "oldproj"])
+        .assert()
+        .success();
+
+    thread::sleep(Duration::from_millis(100));
+
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["stop"])
+        .assert()
+        .success();
+
+    // Amend the project
+    let mut cmd = Command::cargo_bin("timelog").unwrap();
+    cmd.args([
+        "amend",
+        "--date",
+        "2025-08-10",
+        "--task",
+        "test",
+        "--new-project",
+        "newproj",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("oldproj → newproj"));
+
+    cleanup_cli_test_env();
+}
+
+#[test]
+#[serial]
+fn test_amend_remove_project() {
+    let _temp_dir = setup_cli_test_env();
+
+    // Create a task first
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["start", "test task", "--project", "someproj"])
+        .assert()
+        .success();
+
+    thread::sleep(Duration::from_millis(100));
+
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["stop"])
+        .assert()
+        .success();
+
+    // Remove the project
+    let mut cmd = Command::cargo_bin("timelog").unwrap();
+    cmd.args([
+        "amend",
+        "--date",
+        "2025-08-10",
+        "--task",
+        "test",
+        "--new-project",
+        "",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("someproj → (none)"));
+
+    cleanup_cli_test_env();
+}
+
+#[test]
+#[serial]
+fn test_amend_dry_run() {
+    let _temp_dir = setup_cli_test_env();
+
+    // Create a task first
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["start", "test task"])
+        .assert()
+        .success();
+
+    thread::sleep(Duration::from_millis(100));
+
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["stop"])
+        .assert()
+        .success();
+
+    // Dry run amendment
+    let mut cmd = Command::cargo_bin("timelog").unwrap();
+    cmd.args([
+        "amend",
+        "--date",
+        "2025-08-10",
+        "--task",
+        "test",
+        "--new-task",
+        "changed task",
+        "--dry-run",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains(
+        "Dry run mode - no changes were made",
+    ));
+
+    cleanup_cli_test_env();
+}
+
+#[test]
+#[serial]
+fn test_amend_no_matching_record() {
+    let _temp_dir = setup_cli_test_env();
+
+    // Try to amend non-existent record
+    let mut cmd = Command::cargo_bin("timelog").unwrap();
+    cmd.args([
+        "amend",
+        "--date",
+        "2025-08-10",
+        "--task",
+        "nonexistent",
+        "--new-task",
+        "changed",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("no records found"));
+
+    cleanup_cli_test_env();
+}
+
+#[test]
+#[serial]
+fn test_amend_invalid_duration() {
+    let _temp_dir = setup_cli_test_env();
+
+    // Create a task first
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["start", "test task"])
+        .assert()
+        .success();
+
+    thread::sleep(Duration::from_millis(100));
+
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["stop"])
+        .assert()
+        .success();
+
+    // Try to set zero duration
+    let mut cmd = Command::cargo_bin("timelog").unwrap();
+    cmd.args([
+        "amend",
+        "--date",
+        "2025-08-10",
+        "--task",
+        "test",
+        "--new-duration",
+        "0",
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("Duration must be positive"));
+
+    cleanup_cli_test_env();
+}
+
+#[test]
+#[serial]
+fn test_amend_no_changes_specified() {
+    let _temp_dir = setup_cli_test_env();
+
+    // Create a task first
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["start", "test task"])
+        .assert()
+        .success();
+
+    thread::sleep(Duration::from_millis(100));
+
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["stop"])
+        .assert()
+        .success();
+
+    // Try to amend without specifying changes
+    let mut cmd = Command::cargo_bin("timelog").unwrap();
+    cmd.args(["amend", "--date", "2025-08-10", "--task", "test"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No changes specified"));
+
+    cleanup_cli_test_env();
+}
+
+#[test]
+#[serial]
+fn test_amend_multiple_changes() {
+    let _temp_dir = setup_cli_test_env();
+
+    // Create a task first
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["start", "original task", "--project", "oldproj"])
+        .assert()
+        .success();
+
+    thread::sleep(Duration::from_millis(100));
+
+    Command::cargo_bin("timelog")
+        .unwrap()
+        .args(["stop"])
+        .assert()
+        .success();
+
+    // Amend multiple fields
+    let mut cmd = Command::cargo_bin("timelog").unwrap();
+    cmd.args([
+        "amend",
+        "--date",
+        "2025-08-10",
+        "--task",
+        "original",
+        "--new-task",
+        "updated task",
+        "--new-duration",
+        "60",
+        "--new-project",
+        "newproj",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains(
+        "task: 'original task' → 'updated task'",
+    ))
+    .stdout(predicate::str::contains("01:00:00.000"))
+    .stdout(predicate::str::contains("oldproj → newproj"));
+
+    cleanup_cli_test_env();
+}

@@ -216,6 +216,143 @@ fn main() {
             }
         }
 
+        Commands::Amend {
+            date,
+            task,
+            new_task,
+            new_duration,
+            new_project,
+            dry_run,
+        } => {
+            // Parse the date string
+            let parsed_date = match date.parse() {
+                Ok(d) => d,
+                Err(_) => die(&format!(
+                    "Invalid date format '{date}'. Use YYYY-MM-DD format"
+                )),
+            };
+
+            let mut records = match load_records() {
+                Ok(r) => r,
+                Err(e) => die(&e),
+            };
+
+            // Find matching records
+            let matching_indices: Vec<usize> = records
+                .iter()
+                .enumerate()
+                .filter(|(_, record)| record.date == parsed_date && record.task.contains(task))
+                .map(|(i, _)| i)
+                .collect();
+
+            if matching_indices.is_empty() {
+                die(&format!(
+                    "No records found matching date {parsed_date} and task pattern '{task}'"
+                ));
+            }
+
+            if matching_indices.len() > 1 {
+                warn(&format!(
+                    "Found {} matching records. Please be more specific with your task pattern:",
+                    matching_indices.len()
+                ));
+                for &i in &matching_indices {
+                    let record = &records[i];
+                    let project_info = match &record.project {
+                        Some(p) => format!(" (project: {p})"),
+                        None => String::new(),
+                    };
+                    println!(
+                        "  {} - {} - {}{}",
+                        record.date,
+                        record.task,
+                        fmt_hms_ms(record.duration_ms),
+                        project_info
+                    );
+                }
+                die("Use a more specific task pattern to match exactly one record");
+            }
+
+            let record_index = matching_indices[0];
+            let original_record = records[record_index].clone();
+            let mut amended_record = original_record.clone();
+
+            // Apply amendments
+            let mut changes = Vec::new();
+
+            if let Some(task_name) = new_task {
+                amended_record.task = task_name.clone();
+                changes.push(format!(
+                    "task: '{}' → '{}'",
+                    original_record.task, task_name
+                ));
+            }
+
+            if let Some(duration_min) = new_duration {
+                if *duration_min <= 0 {
+                    die("Duration must be positive");
+                }
+                amended_record.duration_ms = duration_min * 60 * 1000; // Convert minutes to milliseconds
+                changes.push(format!(
+                    "duration: {} → {}",
+                    fmt_hms_ms(original_record.duration_ms),
+                    fmt_hms_ms(amended_record.duration_ms)
+                ));
+            }
+
+            if let Some(project_name) = new_project {
+                let new_proj = if project_name.is_empty() {
+                    None
+                } else {
+                    Some(project_name.clone())
+                };
+                let old_proj_str = original_record.project.as_deref().unwrap_or("(none)");
+                let new_proj_str = new_proj.as_deref().unwrap_or("(none)");
+                changes.push(format!("project: {old_proj_str} → {new_proj_str}"));
+                amended_record.project = new_proj;
+            }
+
+            if changes.is_empty() {
+                die("No changes specified. Use --new-task, --new-duration, or --new-project");
+            }
+
+            // Show what will be changed
+            println!("Found record to amend:");
+            let project_info = match &original_record.project {
+                Some(p) => format!(" (project: {p})"),
+                None => String::new(),
+            };
+            println!(
+                "  {} - {} - {}{}",
+                original_record.date,
+                original_record.task,
+                fmt_hms_ms(original_record.duration_ms),
+                project_info
+            );
+
+            println!("\nChanges to apply:");
+            for change in &changes {
+                println!("  {change}");
+            }
+
+            if *dry_run {
+                info("Dry run mode - no changes were made");
+                return;
+            }
+
+            // Apply the amendment
+            records[record_index] = amended_record.clone();
+
+            if let Err(e) = save_records(&records) {
+                die(&e);
+            }
+
+            info(&format!(
+                "Successfully amended record for {} - {}",
+                amended_record.date, amended_record.task
+            ));
+        }
+
         Commands::Upload {
             plugin,
             period,

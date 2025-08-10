@@ -54,6 +54,26 @@ pub enum Commands {
         #[arg(long)]
         list_plugins: bool,
     },
+    Amend {
+        /// Date of the record to amend (YYYY-MM-DD format)
+        #[arg(short, long)]
+        date: String,
+        /// Task pattern to match (partial match)
+        #[arg(short, long)]
+        task: String,
+        /// New task name
+        #[arg(long)]
+        new_task: Option<String>,
+        /// New duration in minutes
+        #[arg(long)]
+        new_duration: Option<i64>,
+        /// New project name (use empty string to remove project)
+        #[arg(long)]
+        new_project: Option<String>,
+        /// Show what would be changed without making changes
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -516,6 +536,19 @@ pub fn save_record(record: &Record) -> Result<(), String> {
         .map_err(|e| format!("Failed to write record: {e}"))?;
     wtr.flush()
         .map_err(|e| format!("Failed to flush record: {e}"))?;
+    Ok(())
+}
+
+pub fn save_records(records: &[Record]) -> Result<(), String> {
+    let f =
+        File::create(record_path()).map_err(|e| format!("Failed to create record file: {e}"))?;
+    let mut wtr = csv::WriterBuilder::new().has_headers(true).from_writer(f);
+    for record in records {
+        wtr.serialize(record)
+            .map_err(|e| format!("Failed to write record: {e}"))?;
+    }
+    wtr.flush()
+        .map_err(|e| format!("Failed to flush records: {e}"))?;
     Ok(())
 }
 
