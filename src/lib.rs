@@ -5,7 +5,7 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::IsTerminal;
 use std::io::{BufReader, BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Parser, Debug)]
@@ -481,7 +481,11 @@ pub fn print_report(
 }
 
 pub fn load_records() -> Result<Vec<Record>, String> {
-    let file = File::open(record_path()).map_err(|_| "no records found".to_string())?;
+    load_records_from_path(&record_path())
+}
+
+pub fn load_records_from_path(path: &Path) -> Result<Vec<Record>, String> {
+    let file = File::open(path).map_err(|_| "no records found".to_string())?;
     let mut rdr = csv::ReaderBuilder::new().flexible(true).from_reader(file);
 
     let mut records: Vec<Record> = Vec::new();
@@ -706,5 +710,26 @@ mod tests {
         // depending on TTY status. Both are valid results.
         let result = emph("test");
         assert!(result == "test" || result == "\x1b[1mtest\x1b[0m");
+    }
+
+    #[test]
+    fn test_path_functions_basic() {
+        // Test that path functions return valid paths without panicking
+        // This replaces the removed integration test that caused race conditions
+
+        // These functions should always return valid PathBuf objects
+        let record_path = record_path();
+        let state_path = state_path();
+        let plugin_path = plugin_dir();
+
+        // Basic validity checks
+        assert!(!record_path.as_os_str().is_empty());
+        assert!(!state_path.as_os_str().is_empty());
+        assert!(!plugin_path.as_os_str().is_empty());
+
+        // Check that they return different paths
+        assert_ne!(record_path, state_path);
+        assert_ne!(record_path, plugin_path);
+        assert_ne!(state_path, plugin_path);
     }
 }
