@@ -54,10 +54,20 @@ struct State {
 }
 
 fn record_path() -> PathBuf {
+    // Check for custom path via environment variable first
+    if let Ok(custom_path) = env::var("TIMELOG_RECORD_PATH") {
+        return PathBuf::from(custom_path);
+    }
+    // Default to ~/.timelog-record
     return PathBuf::from(env::var("HOME").expect("$HOME not set")).join(".timelog-record");
 }
 
 fn state_path() -> PathBuf {
+    // Check for custom path via environment variable first
+    if let Ok(custom_path) = env::var("TIMELOG_STATE_PATH") {
+        return PathBuf::from(custom_path);
+    }
+    // Default to ~/.timelog-state
     return PathBuf::from(env::var("HOME").expect("$HOME not set")).join(".timelog-state");
 }
 

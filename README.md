@@ -32,3 +32,15 @@ timelog report <period> # display each task and total time for given period
 ```
 
 
+## Modify state/record files
+
+```bash
+# Set custom record file path
+export TIMELOG_RECORD_PATH="/path/to/custom/records.csv"
+
+# Set custom state file path  
+export TIMELOG_STATE_PATH="/path/to/custom/state.json"
+
+# Run timelog with custom paths
+timelog start "my task"
+```
