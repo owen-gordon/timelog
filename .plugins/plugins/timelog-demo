@@ -1,0 +1,57 @@
+#!/bin/bash
+# Demo plugin for timelog - shows how the plugin interface works
+
+set -e
+
+# Parse command line args
+DRY_RUN=false
+if [[ "$1" == "--dry-run" ]]; then
+    DRY_RUN=true
+fi
+
+# Read JSON input from stdin
+INPUT=$(cat)
+
+# Extract data from input
+RECORDS=$(echo "$INPUT" | jq '.records')
+PERIOD=$(echo "$INPUT" | jq -r '.period')
+RECORD_COUNT=$(echo "$RECORDS" | jq 'length')
+
+# Simulate processing
+UPLOADED_COUNT=0
+ERRORS=()
+
+echo "Processing $RECORD_COUNT records for period: $PERIOD" >&2
+
+# Process each record and count them
+while IFS= read -r record; do
+    TASK=$(echo "$record" | jq -r '.task')
+    DURATION_MS=$(echo "$record" | jq -r '.duration_ms')
+    DATE=$(echo "$record" | jq -r '.date')
+    
+    DURATION_HOURS=$(echo "scale=2; $DURATION_MS / 3600000" | bc -l)
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "Would upload: $TASK (${DURATION_HOURS}h) on $DATE" >&2
+    else
+        echo "Uploading: $TASK (${DURATION_HOURS}h) on $DATE" >&2
+        # Simulate some work
+        sleep 0.1
+    fi
+    
+    UPLOADED_COUNT=$((UPLOADED_COUNT + 1))
+done < <(echo "$RECORDS" | jq -c '.[]')
+
+# Output successful result
+if [[ "$DRY_RUN" == "true" ]]; then
+    MESSAGE="Demo plugin would process $UPLOADED_COUNT records for $PERIOD"
+else
+    MESSAGE="Demo plugin successfully processed $UPLOADED_COUNT records for $PERIOD"
+fi
+
+jq -n \
+    --arg success "true" \
+    --argjson count "$UPLOADED_COUNT" \
+    --arg message "$MESSAGE" \
+    --argjson errors "[]" \
+    '{success: ($success == "true"), uploaded_count: $count, message: $message, errors: $errors}'

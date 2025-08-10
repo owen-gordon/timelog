@@ -1,0 +1,12 @@
+{
+    "jira_url": "https://your-org.atlassian.net",
+    "jira_email": "your-email@company.com",
+    "jira_token": "your-api-token-here",
+    "default_issue": "PROJ-123",
+    "task_issue_map": {
+        "coding": "DEV-456",
+        "testing": "QA-789",
+        "meetings": "PROJ-000"
+    },
+    "_comment": "Get your API token from https://id.atlassian.com/manage-profile/security/api-tokens"
+}

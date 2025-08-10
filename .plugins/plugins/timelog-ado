@@ -1,0 +1,169 @@
+#!/bin/bash
+# Azure DevOps plugin for timelog - uploads time entries as work logs to ADO work items
+
+set -e
+
+# Parse command line args
+DRY_RUN=false
+if [[ "$1" == "--dry-run" ]]; then
+    DRY_RUN=true
+fi
+
+# Read JSON input from stdin
+INPUT=$(cat)
+
+# Extract config
+ADO_ORG=$(echo "$INPUT" | jq -r '.config.ado_organization // empty')
+ADO_PROJECT=$(echo "$INPUT" | jq -r '.config.ado_project // empty') 
+ADO_TOKEN=$(echo "$INPUT" | jq -r '.config.ado_token // empty')
+DEFAULT_WORK_ITEM=$(echo "$INPUT" | jq -r '.config.default_work_item // empty')
+TASK_WORK_ITEM_MAP=$(echo "$INPUT" | jq -r '.config.task_work_item_map // {}')
+ACTIVITY_TYPE=$(echo "$INPUT" | jq -r '.config.activity_type // "Development"')
+
+if [[ -z "$ADO_ORG" || -z "$ADO_PROJECT" || -z "$ADO_TOKEN" ]]; then
+    echo '{"success": false, "message": "Missing required config: ado_organization, ado_project, ado_token", "errors": ["Add these fields to your timelog-ado.json config file"]}' 
+    exit 0
+fi
+
+# Extract data
+RECORDS=$(echo "$INPUT" | jq '.records')
+PERIOD=$(echo "$INPUT" | jq -r '.period')
+RECORD_COUNT=$(echo "$RECORDS" | jq 'length')
+
+echo "ADO plugin processing $RECORD_COUNT records for period: $PERIOD" >&2
+echo "Target ADO: https://dev.azure.com/$ADO_ORG/$ADO_PROJECT" >&2
+
+UPLOADED_COUNT=0
+ERRORS=()
+
+# ADO API base URL
+ADO_API_BASE="https://dev.azure.com/$ADO_ORG/$ADO_PROJECT/_apis"
+
+# Prepare auth header (ADO uses basic auth with empty username and PAT as password)
+AUTH_HEADER="Authorization: Basic $(echo -n ":$ADO_TOKEN" | base64)"
+
+# Process each record
+while IFS= read -r record; do
+    TASK=$(echo "$record" | jq -r '.task')
+    DURATION_MS=$(echo "$record" | jq -r '.duration_ms')
+    DATE=$(echo "$record" | jq -r '.date')
+    
+    # Convert duration to hours (ADO expects hours as decimal)
+    DURATION_HOURS=$(echo "scale=2; $DURATION_MS / 3600000" | bc -l)
+    
+    # Determine which ADO work item to log against
+    # Check if task name matches a key in task_work_item_map
+    WORK_ITEM_ID=$(echo "$TASK_WORK_ITEM_MAP" | jq -r --arg task "$TASK" '.[$task] // empty')
+    
+    if [[ -z "$WORK_ITEM_ID" ]]; then
+        # Try to extract work item ID from task name (e.g., "1234: Fix bug" or "#1234 Fix bug")
+        WORK_ITEM_ID=$(echo "$TASK" | grep -oE '(^|#)[0-9]+' | sed 's/#//' | head -1 || echo "")
+    fi
+    
+    if [[ -z "$WORK_ITEM_ID" ]]; then
+        WORK_ITEM_ID="$DEFAULT_WORK_ITEM"
+    fi
+    
+    if [[ -z "$WORK_ITEM_ID" ]]; then
+        ERRORS+=("No ADO work item found for task: $TASK (set default_work_item or use format '1234: description')")
+        continue
+    fi
+    
+    # Validate work item ID is numeric
+    if ! [[ "$WORK_ITEM_ID" =~ ^[0-9]+$ ]]; then
+        ERRORS+=("Invalid work item ID '$WORK_ITEM_ID' for task: $TASK (must be numeric)")
+        continue
+    fi
+    
+    # Format the completed date (ADO expects ISO format)
+    COMPLETED_DATE="${DATE}T17:00:00Z"
+    
+    # Create work log payload for ADO REST API
+    PAYLOAD=$(jq -n \
+        --arg completedWork "$DURATION_HOURS" \
+        --arg completedDate "$COMPLETED_DATE" \
+        --arg comment "$TASK" \
+        --arg activityType "$ACTIVITY_TYPE" \
+        '[
+            {
+                "op": "add",
+                "path": "/fields/Microsoft.VSTS.Scheduling.CompletedWork",
+                "value": ($completedWork | tonumber)
+            },
+            {
+                "op": "add", 
+                "path": "/fields/System.History",
+                "value": ("Time logged: " + $completedWork + "h - " + $comment)
+            }
+        ]')
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "Would log ${DURATION_HOURS}h to work item $WORK_ITEM_ID: $TASK" >&2
+        UPLOADED_COUNT=$((UPLOADED_COUNT + 1))
+    else
+        echo "Logging ${DURATION_HOURS}h to work item $WORK_ITEM_ID: $TASK" >&2
+        
+        # First, check if work item exists
+        CHECK_RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Content-Type: application/json" \
+            -H "$AUTH_HEADER" \
+            "$ADO_API_BASE/wit/workitems/$WORK_ITEM_ID?api-version=7.0")
+        
+        CHECK_HTTP_CODE=$(echo "$CHECK_RESPONSE" | tail -1)
+        
+        if [[ "$CHECK_HTTP_CODE" -ne 200 ]]; then
+            ERRORS+=("Work item $WORK_ITEM_ID not found or not accessible")
+            echo "✗ Work item $WORK_ITEM_ID not found" >&2
+            continue
+        fi
+        
+        # Update work item with time logged
+        RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Content-Type: application/json-patch+json" \
+            -H "$AUTH_HEADER" \
+            -X PATCH "$ADO_API_BASE/wit/workitems/$WORK_ITEM_ID?api-version=7.0" \
+            -d "$PAYLOAD")
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+        RESPONSE_BODY=$(echo "$RESPONSE" | head -n -1)
+        
+        if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
+            UPLOADED_COUNT=$((UPLOADED_COUNT + 1))
+            echo "✓ Successfully logged to work item $WORK_ITEM_ID" >&2
+        else
+            ERROR_MSG="Failed to log to work item $WORK_ITEM_ID (HTTP $HTTP_CODE)"
+            if echo "$RESPONSE_BODY" | jq -e '.message' >/dev/null 2>&1; then
+                ADO_ERROR=$(echo "$RESPONSE_BODY" | jq -r '.message')
+                ERROR_MSG="$ERROR_MSG: $ADO_ERROR"
+            elif echo "$RESPONSE_BODY" | jq -e '.value.Message' >/dev/null 2>&1; then
+                ADO_ERROR=$(echo "$RESPONSE_BODY" | jq -r '.value.Message')
+                ERROR_MSG="$ERROR_MSG: $ADO_ERROR"
+            fi
+            ERRORS+=("$ERROR_MSG")
+            echo "✗ $ERROR_MSG" >&2
+        fi
+    fi
+done < <(echo "$RECORDS" | jq -c '.[]')
+
+# Output result
+if [[ ${#ERRORS[@]} -eq 0 ]]; then
+    SUCCESS="true"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        MESSAGE="ADO plugin would log $UPLOADED_COUNT work entries"
+    else
+        MESSAGE="ADO plugin successfully logged $UPLOADED_COUNT work entries"
+    fi
+else
+    SUCCESS="false"
+    MESSAGE="ADO plugin completed with errors (logged $UPLOADED_COUNT/$RECORD_COUNT)"
+fi
+
+# Create errors JSON array
+ERRORS_JSON=$(printf '%s\n' "${ERRORS[@]}" | jq -R . | jq -s .)
+
+jq -n \
+    --arg success "$SUCCESS" \
+    --argjson count "$UPLOADED_COUNT" \
+    --arg message "$MESSAGE" \
+    --argjson errors "$ERRORS_JSON" \
+    '{success: ($success == "true"), uploaded_count: $count, message: $message, errors: $errors}'

@@ -4,7 +4,9 @@ use std::env;
 use std::path::PathBuf;
 use std::fs::{File, self, OpenOptions};
 use std::io::{Write, BufWriter, BufReader};
+use std::process::Command;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use chrono::{DateTime, Datelike, Days, NaiveDate, SecondsFormat, Utc, Weekday, Local};
 use std::io::IsTerminal;
 
@@ -36,7 +38,17 @@ enum Commands {
     Resume,
     Stop,
     Report { period: Period },
-    Status
+    Status,
+    Upload { 
+        #[arg(short, long)]
+        plugin: Option<String>,
+        #[arg(required_unless_present = "list_plugins")]
+        period: Option<Period>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        list_plugins: bool,
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -51,6 +63,21 @@ struct State {
     timestamp: DateTime<Utc>,  // if state is active: timestamp is when task started. if inactive: timestamp is when previous duration after epoch
     task: String,
     active: bool
+}
+
+#[derive(Serialize)]
+struct PluginInput {
+    records: Vec<Record>,
+    period: String,
+    config: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+struct PluginOutput {
+    success: bool,
+    uploaded_count: Option<usize>,
+    message: String,
+    errors: Vec<String>,
 }
 
 fn record_path() -> PathBuf {
@@ -69,6 +96,93 @@ fn state_path() -> PathBuf {
     }
     // Default to ~/.timelog-state
     return PathBuf::from(env::var("HOME").expect("$HOME not set")).join(".timelog-state");
+}
+
+fn plugin_dir() -> PathBuf {
+    // Check for custom path via environment variable first
+    if let Ok(custom_path) = env::var("TIMELOG_PLUGIN_PATH") {
+        return PathBuf::from(custom_path);
+    }
+    // Default to ~/.timelog/plugins
+    PathBuf::from(env::var("HOME").expect("$HOME not set"))
+        .join(".timelog")
+        .join("plugins")
+}
+
+fn discover_plugins() -> Vec<String> {
+    let plugin_path = plugin_dir();
+    if !plugin_path.exists() {
+        return Vec::new();
+    }
+    
+    fs::read_dir(plugin_path)
+        .unwrap_or_else(|_| die("Cannot read plugin directory"))
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            // Only include executable files that start with "timelog-" and don't end with ".json"
+            if path.is_file() && 
+               path.file_name()?.to_str()?.starts_with("timelog-") &&
+               !path.file_name()?.to_str()?.ends_with(".json") {
+                // Check if file is executable
+                use std::os::unix::fs::PermissionsExt;
+                let metadata = path.metadata().ok()?;
+                let permissions = metadata.permissions();
+                if permissions.mode() & 0o111 != 0 { // Check if any execute bit is set
+                    let stem = path.file_stem()?.to_str()?;
+                    // Remove "timelog-" prefix for display
+                    if stem.len() > 8 {
+                        Some(stem[8..].to_string())
+                    } else {
+                        Some(stem.to_string())
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn execute_plugin(plugin_name: &str, input: &PluginInput, dry_run: bool) -> Result<PluginOutput, String> {
+    let plugin_path = plugin_dir().join(format!("timelog-{}", plugin_name));
+    
+    if !plugin_path.exists() {
+        return Err(format!("Plugin '{}' not found at {}", plugin_name, plugin_path.display()));
+    }
+
+    let mut cmd = Command::new(&plugin_path);
+    if dry_run {
+        cmd.arg("--dry-run");
+    }
+
+    let input_json = serde_json::to_string(input)
+        .map_err(|e| format!("Failed to serialize input: {}", e))?;
+
+    let mut child = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start plugin: {}", e))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(input_json.as_bytes())
+            .map_err(|e| format!("Failed to write to plugin stdin: {}", e))?;
+    }
+
+    let output = child.wait_with_output()
+        .map_err(|e| format!("Failed to wait for plugin: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Plugin failed with exit code {:?}: {}", output.status.code(), stderr));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse plugin output: {}", e))
 }
 
 fn is_tty() -> bool {
@@ -449,6 +563,104 @@ fn main() {
                     fmt_hms_ms(elapsed_ms),
                     emph(&state.task),
                 ));
+            }
+        }
+
+        Commands::Upload { plugin, period, dry_run, list_plugins } => {
+            if *list_plugins {
+                let plugins = discover_plugins();
+                if plugins.is_empty() {
+                    info("No plugins found");
+                    info(&format!("Place plugin scripts in: {}", plugin_dir().display()));
+                    info("Plugin scripts should be named 'timelog-<name>' and be executable");
+                } else {
+                    info("Available plugins:");
+                    for p in plugins {
+                        println!("  • {}", p);
+                    }
+                }
+                return;
+            }
+
+            // Load records for the specified period
+            let file = File::open(record_path()).unwrap_or_else(|_| die("no records found"));
+            let mut rdr = csv::Reader::from_reader(file);
+            let mut records: Vec<Record> = Vec::new();
+            for result in rdr.deserialize() {
+                let record: Record = result.expect("Unable to deserialize record");
+                records.push(record);
+            }
+
+            let period = period.as_ref().unwrap(); // Safe because of required_unless_present
+            let today = Utc::now().date_naive();
+            let (start, end) = period_range(period.clone(), today);
+            let filtered: Vec<Record> = records
+                .into_iter()
+                .filter(|x| x.date >= start && x.date <= end)
+                .collect();
+
+            if filtered.is_empty() {
+                warn("no records in selected period");
+                return;
+            }
+
+            let plugin_name = if let Some(p) = plugin {
+                p.clone()
+            } else {
+                let plugins = discover_plugins();
+                if plugins.is_empty() {
+                    die("No plugins available. Use --list-plugins to see setup instructions.");
+                } else if plugins.len() == 1 {
+                    plugins[0].clone()
+                } else {
+                    die("Multiple plugins available, specify one with --plugin <name>");
+                }
+            };
+
+            // Load plugin config
+            let config_path = plugin_dir().join(format!("timelog-{}.json", plugin_name));
+            let config = if config_path.exists() {
+                let config_str = fs::read_to_string(config_path)
+                    .unwrap_or_else(|_| die("Failed to read plugin config"));
+                serde_json::from_str(&config_str)
+                    .unwrap_or_else(|_| die("Invalid plugin config JSON"))
+            } else {
+                serde_json::Value::Object(serde_json::Map::new())
+            };
+
+            let period_str = format!("{:?}", period).to_lowercase();
+            let input = PluginInput {
+                records: filtered,
+                period: period_str,
+                config,
+            };
+
+            info(&format!("Executing plugin: {}", emph(&plugin_name)));
+            if *dry_run {
+                info("(dry run mode)");
+            }
+
+            match execute_plugin(&plugin_name, &input, *dry_run) {
+                Ok(output) => {
+                    if output.success {
+                        info(&format!("{}", output.message));
+                        if let Some(count) = output.uploaded_count {
+                            info(&format!("Processed {} records", count));
+                        }
+                        if !output.errors.is_empty() {
+                            warn("Some warnings occurred:");
+                            for error in output.errors {
+                                warn(&format!("  {}", error));
+                            }
+                        }
+                    } else {
+                        warn(&format!("Plugin failed: {}", output.message));
+                        for error in output.errors {
+                            warn(&format!("  {}", error));
+                        }
+                    }
+                }
+                Err(e) => die(&format!("Plugin execution failed: {}", e)),
             }
         }
     }

@@ -1,0 +1,149 @@
+#!/bin/bash
+# Jira plugin for timelog - uploads time entries as work logs to Jira
+
+set -e
+
+# Parse command line args
+DRY_RUN=false
+if [[ "$1" == "--dry-run" ]]; then
+    DRY_RUN=true
+fi
+
+# Read JSON input from stdin
+INPUT=$(cat)
+
+# Extract config
+JIRA_URL=$(echo "$INPUT" | jq -r '.config.jira_url // empty')
+JIRA_TOKEN=$(echo "$INPUT" | jq -r '.config.jira_token // empty')
+JIRA_EMAIL=$(echo "$INPUT" | jq -r '.config.jira_email // empty')
+DEFAULT_ISSUE=$(echo "$INPUT" | jq -r '.config.default_issue // empty')
+TASK_ISSUE_MAP=$(echo "$INPUT" | jq -r '.config.task_issue_map // {}')
+
+if [[ -z "$JIRA_URL" || -z "$JIRA_TOKEN" || -z "$JIRA_EMAIL" ]]; then
+    echo '{"success": false, "message": "Missing required config: jira_url, jira_token, jira_email", "errors": ["Add these fields to your timelog-jira.json config file"]}' 
+    exit 0
+fi
+
+# Extract data
+RECORDS=$(echo "$INPUT" | jq '.records')
+PERIOD=$(echo "$INPUT" | jq -r '.period')
+RECORD_COUNT=$(echo "$RECORDS" | jq 'length')
+
+echo "Jira plugin processing $RECORD_COUNT records for period: $PERIOD" >&2
+echo "Target Jira: $JIRA_URL" >&2
+
+UPLOADED_COUNT=0
+ERRORS=()
+
+# Prepare auth header (Jira uses basic auth with email:token)
+AUTH_STRING="$JIRA_EMAIL:$JIRA_TOKEN"
+AUTH_HEADER="Authorization: Basic $(echo -n "$AUTH_STRING" | base64)"
+
+# Process each record
+echo "$RECORDS" | jq -c '.[]' | while read -r record; do
+    TASK=$(echo "$record" | jq -r '.task')
+    DURATION_MS=$(echo "$record" | jq -r '.duration_ms')
+    DATE=$(echo "$record" | jq -r '.date')
+    
+    # Convert duration to seconds (Jira expects seconds)
+    DURATION_SEC=$((DURATION_MS / 1000))
+    
+    # Determine which Jira issue to log against
+    # Check if task name matches a key in task_issue_map
+    ISSUE_KEY=$(echo "$TASK_ISSUE_MAP" | jq -r --arg task "$TASK" '.[$task] // empty')
+    
+    if [[ -z "$ISSUE_KEY" ]]; then
+        # Try to extract issue key from task name (e.g., "PROJ-123: Fix bug")
+        ISSUE_KEY=$(echo "$TASK" | grep -oE '[A-Z]+-[0-9]+' | head -1 || echo "")
+    fi
+    
+    if [[ -z "$ISSUE_KEY" ]]; then
+        ISSUE_KEY="$DEFAULT_ISSUE"
+    fi
+    
+    if [[ -z "$ISSUE_KEY" ]]; then
+        ERRORS+=("No Jira issue found for task: $TASK (set default_issue or use task format 'PROJ-123: description')")
+        continue
+    fi
+    
+    # Format the start time (Jira expects ISO format)
+    # Use 9 AM as default time if not specified
+    START_TIME="${DATE}T09:00:00.000+0000"
+    
+    # Create work log payload
+    PAYLOAD=$(jq -n \
+        --arg timeSpent "${DURATION_SEC}s" \
+        --arg started "$START_TIME" \
+        --arg comment "$TASK" \
+        '{
+            timeSpentSeconds: ($timeSpent | tonumber),
+            started: $started,
+            comment: {
+                type: "doc",
+                version: 1,
+                content: [
+                    {
+                        type: "paragraph",
+                        content: [
+                            {
+                                type: "text",
+                                text: $comment
+                            }
+                        ]
+                    }
+                ]
+            }
+        }')
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "Would log $DURATION_SEC seconds to $ISSUE_KEY: $TASK" >&2
+        ((UPLOADED_COUNT++))
+    else
+        echo "Logging $DURATION_SEC seconds to $ISSUE_KEY: $TASK" >&2
+        
+        RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Content-Type: application/json" \
+            -H "$AUTH_HEADER" \
+            -X POST "$JIRA_URL/rest/api/3/issue/$ISSUE_KEY/worklog" \
+            -d "$PAYLOAD")
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+        RESPONSE_BODY=$(echo "$RESPONSE" | head -n -1)
+        
+        if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
+            ((UPLOADED_COUNT++))
+            echo "✓ Successfully logged to $ISSUE_KEY" >&2
+        else
+            ERROR_MSG="Failed to log to $ISSUE_KEY (HTTP $HTTP_CODE)"
+            if echo "$RESPONSE_BODY" | jq -e '.errorMessages' >/dev/null 2>&1; then
+                JIRA_ERROR=$(echo "$RESPONSE_BODY" | jq -r '.errorMessages[]' | head -1)
+                ERROR_MSG="$ERROR_MSG: $JIRA_ERROR"
+            fi
+            ERRORS+=("$ERROR_MSG")
+            echo "✗ $ERROR_MSG" >&2
+        fi
+    fi
+done
+
+# Output result
+if [[ ${#ERRORS[@]} -eq 0 ]]; then
+    SUCCESS="true"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        MESSAGE="Jira plugin would log $UPLOADED_COUNT work entries"
+    else
+        MESSAGE="Jira plugin successfully logged $UPLOADED_COUNT work entries"
+    fi
+else
+    SUCCESS="false"
+    MESSAGE="Jira plugin completed with errors (logged $UPLOADED_COUNT/$RECORD_COUNT)"
+fi
+
+# Create errors JSON array
+ERRORS_JSON=$(printf '%s\n' "${ERRORS[@]}" | jq -R . | jq -s .)
+
+jq -n \
+    --arg success "$SUCCESS" \
+    --argjson count "$UPLOADED_COUNT" \
+    --arg message "$MESSAGE" \
+    --argjson errors "$ERRORS_JSON" \
+    '{success: ($success == "true"), uploaded_count: $count, message: $message, errors: $errors}'

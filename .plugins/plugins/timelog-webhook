@@ -1,0 +1,125 @@
+#!/bin/bash
+# Webhook plugin for timelog - POSTs time entries to an HTTP endpoint
+
+set -e
+
+# Parse command line args
+DRY_RUN=false
+if [[ "$1" == "--dry-run" ]]; then
+    DRY_RUN=true
+fi
+
+# Read JSON input from stdin
+INPUT=$(cat)
+
+# Extract config
+WEBHOOK_URL=$(echo "$INPUT" | jq -r '.config.webhook_url // empty')
+WEBHOOK_TOKEN=$(echo "$INPUT" | jq -r '.config.webhook_token // empty')
+WEBHOOK_FORMAT=$(echo "$INPUT" | jq -r '.config.format // "json"')
+
+if [[ -z "$WEBHOOK_URL" ]]; then
+    echo '{"success": false, "message": "Missing required config: webhook_url", "errors": ["Add webhook_url to your timelog-webhook.json config file"]}' 
+    exit 0
+fi
+
+# Extract data
+RECORDS=$(echo "$INPUT" | jq '.records')
+PERIOD=$(echo "$INPUT" | jq -r '.period')
+RECORD_COUNT=$(echo "$RECORDS" | jq 'length')
+
+echo "Webhook plugin processing $RECORD_COUNT records for period: $PERIOD" >&2
+echo "Target URL: $WEBHOOK_URL" >&2
+
+UPLOADED_COUNT=0
+ERRORS=()
+
+# Prepare headers
+HEADERS=(-H "Content-Type: application/json")
+if [[ -n "$WEBHOOK_TOKEN" ]]; then
+    HEADERS+=(-H "Authorization: Bearer $WEBHOOK_TOKEN")
+fi
+
+if [[ "$WEBHOOK_FORMAT" == "batch" ]]; then
+    # Send all records in one request
+    PAYLOAD=$(echo "$INPUT" | jq '{
+        period: .period,
+        total_records: (.records | length),
+        total_duration_ms: (.records | map(.duration_ms) | add),
+        records: .records
+    }')
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "Would POST batch payload to $WEBHOOK_URL:" >&2
+        echo "$PAYLOAD" | jq . >&2
+        UPLOADED_COUNT=$RECORD_COUNT
+    else
+        echo "POSTing batch payload..." >&2
+        RESPONSE=$(curl -s -w "\n%{http_code}" "${HEADERS[@]}" \
+            -X POST "$WEBHOOK_URL" -d "$PAYLOAD")
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+        RESPONSE_BODY=$(echo "$RESPONSE" | head -n -1)
+        
+        if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
+            UPLOADED_COUNT=$RECORD_COUNT
+            echo "Batch upload successful (HTTP $HTTP_CODE)" >&2
+        else
+            ERRORS+=("Batch upload failed (HTTP $HTTP_CODE): $RESPONSE_BODY")
+        fi
+    fi
+else
+    # Send individual records
+    echo "$RECORDS" | jq -c '.[]' | while read -r record; do
+        TASK=$(echo "$record" | jq -r '.task')
+        DURATION_MS=$(echo "$record" | jq -r '.duration_ms')
+        DATE=$(echo "$record" | jq -r '.date')
+        
+        PAYLOAD=$(jq -n \
+            --arg task "$TASK" \
+            --argjson duration_ms "$DURATION_MS" \
+            --arg date "$DATE" \
+            --arg period "$PERIOD" \
+            '{task: $task, duration_ms: $duration_ms, date: $date, period: $period}')
+        
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo "Would POST: $PAYLOAD" >&2
+            ((UPLOADED_COUNT++))
+        else
+            echo "POSTing: $TASK ($DURATION_MS ms) on $DATE" >&2
+            RESPONSE=$(curl -s -w "\n%{http_code}" "${HEADERS[@]}" \
+                -X POST "$WEBHOOK_URL" -d "$PAYLOAD")
+            
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            RESPONSE_BODY=$(echo "$RESPONSE" | head -n -1)
+            
+            if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
+                ((UPLOADED_COUNT++))
+            else
+                ERRORS+=("Failed to upload $TASK (HTTP $HTTP_CODE): $RESPONSE_BODY")
+            fi
+        fi
+    done
+fi
+
+# Output result
+if [[ ${#ERRORS[@]} -eq 0 ]]; then
+    SUCCESS="true"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        MESSAGE="Webhook plugin would send $UPLOADED_COUNT records to $WEBHOOK_URL"
+    else
+        MESSAGE="Webhook plugin successfully sent $UPLOADED_COUNT records to $WEBHOOK_URL"
+    fi
+else
+    SUCCESS="false"
+    MESSAGE="Webhook plugin completed with errors (uploaded $UPLOADED_COUNT/$RECORD_COUNT)"
+fi
+
+# Create errors JSON array
+ERRORS_JSON=$(printf '%s\n' "${ERRORS[@]}" | jq -R . | jq -s .)
+
+jq -n \
+    --arg success "$SUCCESS" \
+    --argjson count "$UPLOADED_COUNT" \
+    --arg message "$MESSAGE" \
+    --argjson errors "$ERRORS_JSON" \
+    '{success: ($success == "true"), uploaded_count: $count, message: $message, errors: $errors}'

@@ -1,0 +1,15 @@
+{
+    "ado_organization": "your-org",
+    "ado_project": "Your Project Name",
+    "ado_token": "your-personal-access-token-here",
+    "default_work_item": "12345",
+    "activity_type": "Development",
+    "task_work_item_map": {
+        "coding": "12345",
+        "testing": "12346",
+        "debugging": "12347",
+        "code review": "12348",
+        "meetings": "12349"
+    },
+    "_comment": "Get your PAT from https://dev.azure.com/[org]/_usersSettings/tokens with Work Items (read & write) scope"
+}
