@@ -33,11 +33,19 @@ enum Period {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    Start { task: String },
+    Start { 
+        task: String,
+        #[arg(short, long)]
+        project: Option<String>
+    },
     Pause,
     Resume,
     Stop,
-    Report { period: Period },
+    Report { 
+        period: Period,
+        #[arg(short, long)]
+        project: Option<String>
+    },
     Status,
     Upload { 
         #[arg(short, long)]
@@ -55,14 +63,16 @@ enum Commands {
 struct Record {
     task: String,
     duration_ms: i64,
-    date: NaiveDate
+    date: NaiveDate,
+    project: Option<String>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct State {
     timestamp: DateTime<Utc>,  // if state is active: timestamp is when task started. if inactive: timestamp is when previous duration after epoch
     task: String,
-    active: bool
+    active: bool,
+    project: Option<String>
 }
 
 #[derive(Serialize)]
@@ -336,7 +346,7 @@ fn weekday_short(w: Weekday) -> &'static str {
     }
 }
 
-fn print_report(period: Period, start: NaiveDate, end: NaiveDate, rows: &[Record]) {
+fn print_report(period: Period, start: NaiveDate, end: NaiveDate, rows: &[Record], project_filter: &Option<String>) {
     let title = match period {
         Period::Today => "Today",
         Period::Yesterday => "Yesterday",
@@ -348,23 +358,33 @@ fn print_report(period: Period, start: NaiveDate, end: NaiveDate, rows: &[Record
         Period::LastYear => "Last Year",
     };
 
-    println!("{} ({start}..{end})", emph(&format!("{} report", title)));
+    let title_suffix = match project_filter {
+        Some(p) => format!(" for project {}", emph(p)),
+        None => String::new()
+    };
+    println!("{}{} ({start}..{end})", emph(&format!("{} report", title)), title_suffix);
 
     // column widths
     let mut task_w = "TASK".len();
+    let mut project_w = "PROJECT".len();
     for r in rows {
         task_w = task_w.max(r.task.len());
+        if let Some(p) = &r.project {
+            project_w = project_w.max(p.len());
+        }
     }
 
     let hdr_task = "TASK";
+    let hdr_project = "PROJECT";
     let hdr_date = "DATE";
     let hdr_dur  = "DURATION";
 
-    println!("{:<task_w$}  {:<10}  {:>10}",
-             hdr_task, hdr_date, hdr_dur, task_w = task_w);
+    println!("{:<task_w$}  {:<project_w$}  {:<10}  {:>10}",
+             hdr_task, hdr_project, hdr_date, hdr_dur, task_w = task_w, project_w = project_w);
     println!(
-        "{}  {}  {}",
+        "{}  {}  {}  {}",
         "-".repeat(task_w),
+        "-".repeat(project_w),
         "-".repeat(10),
         "-".repeat(10),
     );
@@ -372,27 +392,33 @@ fn print_report(period: Period, start: NaiveDate, end: NaiveDate, rows: &[Record
     let mut total_ms: i64 = 0;
     for r in rows {
         total_ms += r.duration_ms;
+        let project_str = r.project.as_deref().unwrap_or("-");
         println!(
-            "{:<task_w$}  {:<10}  {:>10}",
+            "{:<task_w$}  {:<project_w$}  {:<10}  {:>10}",
             r.task,
+            project_str,
             r.date,                   // always ISO date for CLI clarity
             fmt_duration(r.duration_ms),
-            task_w = task_w
+            task_w = task_w,
+            project_w = project_w
         );
     }
 
     println!(
-        "{}  {}  {}",
+        "{}  {}  {}  {}",
         "-".repeat(task_w),
+        "-".repeat(project_w),
         "-".repeat(10),
         "-".repeat(10),
     );
     println!(
-        "{:<task_w$}  {:<10}  {:>10}",
+        "{:<task_w$}  {:<project_w$}  {:<10}  {:>10}",
         "TOTAL",
         "",
+        "",
         fmt_duration(total_ms),
-        task_w = task_w
+        task_w = task_w,
+        project_w = project_w
     );
 }
 
@@ -400,16 +426,25 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Start { task } => {
+        Commands::Start { task, project } => {
             if state_path().exists() {
                 die("a task is already in progress; run `timelog pause` or `timelog stop`");
             }
 
             let file = File::create(state_path()).expect("Unable to create state file");
-            let state = State{ timestamp: Utc::now(), task: task.to_string(), active: true };
+            let state = State{ 
+                timestamp: Utc::now(), 
+                task: task.to_string(), 
+                active: true,
+                project: project.clone()
+            };
             write(state, file);
 
-            info(&format!("started {}", emph(task)));
+            let project_info = match project {
+                Some(p) => format!(" in project {}", emph(p)),
+                None => String::new()
+            };
+            info(&format!("started {}{}", emph(task), project_info));
         }
 
         Commands::Pause => {
@@ -427,7 +462,12 @@ fn main() {
             let epoch = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
             let timestamp = epoch + elapsed;
 
-            let paused_state = State{ timestamp, task: state.task.clone(), active: false };
+            let paused_state = State{ 
+                timestamp, 
+                task: state.task.clone(), 
+                active: false,
+                project: state.project.clone()
+            };
             let pause_file = File::create(state_path()).expect("Unable to create state file");
             write(paused_state, pause_file);
 
@@ -452,7 +492,12 @@ fn main() {
             let elapsed = state.timestamp - epoch;
             let timestamp = Utc::now() - elapsed;
 
-            let active_state = State{ timestamp, task: state.task.clone(), active: true };
+            let active_state = State{ 
+                timestamp, 
+                task: state.task.clone(), 
+                active: true,
+                project: state.project.clone()
+            };
             let resume_file = File::create(state_path()).expect("Unable to create state file");
             write(active_state, resume_file);
 
@@ -478,6 +523,7 @@ fn main() {
                 task: state.task.clone(),
                 duration_ms: elapsed.num_milliseconds(),
                 date: Utc::now().naive_local().date(),
+                project: state.project.clone(),
             };
 
             let f = OpenOptions::new().create(true).write(true).append(true)
@@ -489,21 +535,52 @@ fn main() {
 
             fs::remove_file(state_path()).expect("Unable to delete state file");
 
+            let project_info = match &record.project {
+                Some(p) => format!(" in project {}", emph(p)),
+                None => String::new()
+            };
             info(&format!(
-                "recorded {}  {} on {}",
+                "recorded {}{}  {} on {}",
                 emph(&record.task),
+                project_info,
                 fmt_hms_ms(record.duration_ms),
                 record.date,
             ));
         }
 
-        Commands::Report { period } => {
+        Commands::Report { period, project } => {
             let file = File::open(record_path()).unwrap_or_else(|_| die("no records found"));
-            let mut rdr = csv::Reader::from_reader(file);
+            let mut rdr = csv::ReaderBuilder::new()
+                .flexible(true)
+                .from_reader(file);
 
             let mut records: Vec<Record> = Vec::new();
-            for result in rdr.deserialize() {
-                let record: Record = result.expect("Unable to deserialize record");
+            for result in rdr.records() {
+                let record_result = result.expect("Unable to read CSV record");
+                let record = if record_result.len() == 3 {
+                    // Old format without project
+                    Record {
+                        task: record_result[0].to_string(),
+                        duration_ms: record_result[1].parse().expect("Invalid duration"),
+                        date: record_result[2].parse().expect("Invalid date"),
+                        project: None,
+                    }
+                } else if record_result.len() >= 4 {
+                    // New format with project
+                    let project = if record_result[3].is_empty() {
+                        None
+                    } else {
+                        Some(record_result[3].to_string())
+                    };
+                    Record {
+                        task: record_result[0].to_string(),
+                        duration_ms: record_result[1].parse().expect("Invalid duration"),
+                        date: record_result[2].parse().expect("Invalid date"),
+                        project,
+                    }
+                } else {
+                    panic!("Invalid CSV record format");
+                };
                 records.push(record);
             }
 
@@ -513,6 +590,10 @@ fn main() {
             let mut filtered: Vec<Record> = records
                 .into_iter()
                 .filter(|x| x.date >= start && x.date <= end)
+                .filter(|x| match project {
+                    Some(p) => x.project.as_ref().map_or(false, |proj| proj == p),
+                    None => true
+                })
                 .collect();
 
             if filtered.is_empty() {
@@ -523,7 +604,7 @@ fn main() {
             // sort by date, then task
             filtered.sort_by_key(|r| (r.date, r.task.clone()));
 
-            print_report(period.clone(), start, end, &filtered);
+            print_report(period.clone(), start, end, &filtered, project);
         }
 
         Commands::Status => {
@@ -537,7 +618,7 @@ fn main() {
             let epoch = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
 
             // If active, elapsed = now - started_at; if paused, elapsed = stored
-            let (elapsed_ms, since_ts, status_str) = if state.active {
+            let (elapsed_ms, since_ts, _status_str) = if state.active {
                 let e = (Utc::now() - state.timestamp).num_milliseconds();
                 (clamp_nonneg(e), state.timestamp, "active")
             } else {
@@ -546,22 +627,29 @@ fn main() {
             };
 
             // Pretty, concise status lines
+            let project_info = match &state.project {
+                Some(p) => format!(" in project {}", emph(p)),
+                None => String::new()
+            };
+            
             if state.active {
-                // e.g., "active 00:42:10.123 since 2025-08-08T17:20:11Z  —  task: compile"
+                // e.g., "active 00:42:10.123 since 2025-08-08T17:20:11Z  —  task: compile in project myproject"
                 info(&format!(
-                    "{}  {}  since {}  —  task: {}",
+                    "{}  {}  since {}  —  task: {}{}",
                     emph("active"),
                     fmt_hms_ms(elapsed_ms),
                     fmt_ts(since_ts),
                     emph(&state.task),
+                    project_info,
                 ));
             } else {
                 // When paused, `since_ts` is the pause timestamp encoded in state.timestamp
                 info(&format!(
-                    "{}  accumulated {}  —  task: {}",
+                    "{}  accumulated {}  —  task: {}{}",
                     emph("paused"),
                     fmt_hms_ms(elapsed_ms),
                     emph(&state.task),
+                    project_info,
                 ));
             }
         }
@@ -584,10 +672,36 @@ fn main() {
 
             // Load records for the specified period
             let file = File::open(record_path()).unwrap_or_else(|_| die("no records found"));
-            let mut rdr = csv::Reader::from_reader(file);
+            let mut rdr = csv::ReaderBuilder::new()
+                .flexible(true)
+                .from_reader(file);
             let mut records: Vec<Record> = Vec::new();
-            for result in rdr.deserialize() {
-                let record: Record = result.expect("Unable to deserialize record");
+            for result in rdr.records() {
+                let record_result = result.expect("Unable to read CSV record");
+                let record = if record_result.len() == 3 {
+                    // Old format without project
+                    Record {
+                        task: record_result[0].to_string(),
+                        duration_ms: record_result[1].parse().expect("Invalid duration"),
+                        date: record_result[2].parse().expect("Invalid date"),
+                        project: None,
+                    }
+                } else if record_result.len() >= 4 {
+                    // New format with project
+                    let project = if record_result[3].is_empty() {
+                        None
+                    } else {
+                        Some(record_result[3].to_string())
+                    };
+                    Record {
+                        task: record_result[0].to_string(),
+                        duration_ms: record_result[1].parse().expect("Invalid duration"),
+                        date: record_result[2].parse().expect("Invalid date"),
+                        project,
+                    }
+                } else {
+                    panic!("Invalid CSV record format");
+                };
                 records.push(record);
             }
 
